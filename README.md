@@ -21,6 +21,9 @@ Teneo bot is a simple tool designed to automate the node interaction.
    ```bash
    npm install
    ```
+   ```bash
+   npm install socks-proxy-agent
+   ```
 
 ## Usage
 
