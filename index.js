@@ -1,7 +1,7 @@
 const axios = require('axios');
 const chalk = require('chalk');
 const WebSocket = require('ws');
-const { HttpsProxyAgent } = require('https-proxy-agent');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 const fs = require('fs');
 const readline = require('readline');
 const keypress = require('keypress');
@@ -58,11 +58,9 @@ function loadProxies() {
   }
 }
 
+// حذف تابع normalizeProxyUrl یا فقط بازگشت به ورودی
 function normalizeProxyUrl(proxy) {
-  if (!proxy.startsWith('http://') && !proxy.startsWith('https://')) {
-    proxy = 'http://' + proxy;
-  }
-  return proxy;
+  return proxy; // حذف اضافات
 }
 
 function promptUseProxy() {
@@ -217,7 +215,7 @@ async function connectWebSocket(index) {
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
   const proxy = proxies[index % proxies.length];
-  const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
+  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
 
   sockets[index] = new WebSocket(wsUrl, { agent });
 
@@ -265,7 +263,7 @@ async function reconnectWebSocket(index) {
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
   const proxy = proxies[index % proxies.length];
-  const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
+  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
 
   if (sockets[index]) {
     sockets[index].removeAllListeners();
@@ -382,7 +380,7 @@ function startPinging(index) {
   pingIntervals[index] = setInterval(async () => {
     if (sockets[index] && sockets[index].readyState === WebSocket.OPEN) {
       const proxy = proxies[index % proxies.length];
-      const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
+      const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
 
       sockets[index].send(JSON.stringify({ type: "PING" }), { agent });
       if (index === currentAccountIndex) {
@@ -409,7 +407,7 @@ async function getUserId(index) {
   const loginUrl = "https://auth.teneo.pro/api/login";
 
   const proxy = proxies[index % proxies.length];
-  const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
+  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
 
   try {
     const response = await axios.post(loginUrl, {
