@@ -1,7 +1,7 @@
 const axios = require('axios');
 const chalk = require('chalk');
 const WebSocket = require('ws');
-const { SocksProxyAgent } = require('socks-proxy-agent');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const fs = require('fs');
 const readline = require('readline');
 const keypress = require('keypress');
@@ -17,29 +17,68 @@ let lastUpdateds = [];
 let messages = [];
 let userIds = [];
 let browserIds = [];
-let accounts = [];
+let proxies = [];
 let accessTokens = [];
+let accounts = [];
+let useProxy = false;
 let enableAutoRetry = false;
 let currentAccountIndex = 0;
 
 function loadAccounts() {
-  if (!fs.existsSync('accounts.txt')) {
-    console.error('accounts.txt not found. Please add the file with account data.');
+  if (!fs.existsSync('account.txt')) {
+    console.error('account.txt not found. Please add the file with account data.');
     process.exit(1);
   }
 
   try {
-    const data = fs.readFileSync('accounts.txt', 'utf8');
+    const data = fs.readFileSync('account.txt', 'utf8');
     accounts = data.split('\n').map(line => {
-      const [email, password, proxy] = line.split(',');
-      if (email && password && proxy) {
-        return { email: email.trim(), password: password.trim(), proxy: proxy.trim() };
+      const [email, password] = line.split(',');
+      if (email && password) {
+        return { email: email.trim(), password: password.trim() };
       }
       return null;
     }).filter(account => account !== null);
   } catch (err) {
     console.error('Failed to load accounts:', err);
   }
+}
+
+function loadProxies() {
+  if (!fs.existsSync('proxy.txt')) {
+    console.error('proxy.txt not found. Please add the file with proxy data.');
+    process.exit(1);
+  }
+
+  try {
+    const data = fs.readFileSync('proxy.txt', 'utf8');
+    proxies = data.split('\n').map(line => line.trim()).filter(line => line);
+  } catch (err) {
+    console.error('Failed to load proxies:', err);
+  }
+}
+
+function normalizeProxyUrl(proxy) {
+  if (!proxy.startsWith('http://') && !proxy.startsWith('https://')) {
+    proxy = 'http://' + proxy;
+  }
+  return proxy;
+}
+
+function promptUseProxy() {
+  return new Promise((resolve) => {
+    displayHeader();
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    rl.question('Do you want to use a proxy? (y/n): ', (answer) => {
+      useProxy = answer.toLowerCase() === 'y';
+      rl.close();
+      resolve();
+    });
+  });
 }
 
 function promptEnableAutoRetry() {
@@ -59,7 +98,14 @@ function promptEnableAutoRetry() {
 
 async function initialize() {
   loadAccounts();
+  loadProxies();
+  await promptUseProxy();
   await promptEnableAutoRetry();
+
+  if (useProxy && proxies.length < accounts.length) {
+    console.error('Not enough proxies for the number of accounts. Please add more proxies.');
+    process.exit(1);
+  }
 
   for (let i = 0; i < accounts.length; i++) {
     potentialPoints[i] = 0;
@@ -122,8 +168,12 @@ function displayAccountData(index) {
   console.log(chalk.green(`Points Today: ${pointsToday[index]}`));
   console.log(chalk.whiteBright(`Message: ${messages[index]}`));
 
-  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-  console.log(chalk.hex('#FFA500')(`Proxy: ${proxy}`));
+  const proxy = proxies[index % proxies.length];
+  if (useProxy && proxy) {
+    console.log(chalk.hex('#FFA500')(`Proxy: ${proxy}`));
+  } else {
+    console.log(chalk.hex('#FFA500')(`Proxy: Not using proxy`));
+  }
 
   console.log(chalk.cyan(separatorLine));
   console.log("\nStatus:");
@@ -166,8 +216,8 @@ async function connectWebSocket(index) {
   const url = "wss://secure.ws.teneo.pro";
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
-  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-  const agent = new SocksProxyAgent(proxy); // اگر پروکسی استفاده می‌شود
+  const proxy = proxies[index % proxies.length];
+  const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
 
   sockets[index] = new WebSocket(wsUrl, { agent });
 
@@ -214,8 +264,8 @@ async function reconnectWebSocket(index) {
   const url = "wss://secure.ws.teneo.pro";
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
-  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-  const agent = new SocksProxyAgent(proxy); // اگر پروکسی استفاده می‌شود
+  const proxy = proxies[index % proxies.length];
+  const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
 
   if (sockets[index]) {
     sockets[index].removeAllListeners();
@@ -331,7 +381,10 @@ async function updateCountdownAndPoints(index) {
 function startPinging(index) {
   pingIntervals[index] = setInterval(async () => {
     if (sockets[index] && sockets[index].readyState === WebSocket.OPEN) {
-      sockets[index].send(JSON.stringify({ type: "PING" }));
+      const proxy = proxies[index % proxies.length];
+      const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
+
+      sockets[index].send(JSON.stringify({ type: "PING" }), { agent });
       if (index === currentAccountIndex) {
         displayAccountData(index);
       }
@@ -339,15 +392,33 @@ function startPinging(index) {
   }, 60000);
 }
 
+function stopPinging(index) {
+  if (pingIntervals[index]) {
+    clearInterval(pingIntervals[index]);
+    pingIntervals[index] = null;
+  }
+}
+
+function restartAccountProcess(index) {
+  disconnectWebSocket(index);
+  connectWebSocket(index);
+  console.log(`WebSocket restarted for index: ${index}`);
+}
+
 async function getUserId(index) {
   const loginUrl = "https://auth.teneo.pro/api/login";
+
+  const proxy = proxies[index % proxies.length];
+  const agent = useProxy && proxy ? new HttpsProxyAgent(normalizeProxyUrl(proxy)) : null;
 
   try {
     const response = await axios.post(loginUrl, {
       email: accounts[index].email,
       password: accounts[index].password
     }, {
+      httpsAgent: agent,
       headers: {
+        'Authorization': `Bearer ${accessTokens[index]}`,
         'Content-Type': 'application/json',
         'authority': 'auth.teneo.pro',
         'x-api-key': 'OwAG3kib1ivOJG4Y0OCZ8lJETa6ypvsDtGmdhcjA'
