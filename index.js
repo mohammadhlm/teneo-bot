@@ -17,50 +17,30 @@ let lastUpdateds = [];
 let messages = [];
 let userIds = [];
 let browserIds = [];
-let proxies = [];
-let accessTokens = [];
 let accounts = [];
+let accessTokens = [];
 let useProxy = false;
 let enableAutoRetry = false;
 let currentAccountIndex = 0;
 
-function loadAccounts() {
-  if (!fs.existsSync('account.txt')) {
-    console.error('account.txt not found. Please add the file with account data.');
+function loadAccountsAndProxies() {
+  if (!fs.existsSync('accounts_proxies.txt')) {
+    console.error('accounts_proxies.txt not found. Please add the file with account and proxy data.');
     process.exit(1);
   }
 
   try {
-    const data = fs.readFileSync('account.txt', 'utf8');
+    const data = fs.readFileSync('accounts_proxies.txt', 'utf8');
     accounts = data.split('\n').map(line => {
-      const [email, password] = line.split(',');
-      if (email && password) {
-        return { email: email.trim(), password: password.trim() };
+      const [email, password, proxy] = line.split(',');
+      if (email && password && proxy) {
+        return { email: email.trim(), password: password.trim(), proxy: proxy.trim() };
       }
       return null;
     }).filter(account => account !== null);
   } catch (err) {
-    console.error('Failed to load accounts:', err);
+    console.error('Failed to load accounts and proxies:', err);
   }
-}
-
-function loadProxies() {
-  if (!fs.existsSync('proxy.txt')) {
-    console.error('proxy.txt not found. Please add the file with proxy data.');
-    process.exit(1);
-  }
-
-  try {
-    const data = fs.readFileSync('proxy.txt', 'utf8');
-    proxies = data.split('\n').map(line => line.trim()).filter(line => line);
-  } catch (err) {
-    console.error('Failed to load proxies:', err);
-  }
-}
-
-// حذف تابع normalizeProxyUrl یا فقط بازگشت به ورودی
-function normalizeProxyUrl(proxy) {
-  return proxy; // حذف اضافات
 }
 
 function promptUseProxy() {
@@ -95,15 +75,9 @@ function promptEnableAutoRetry() {
 }
 
 async function initialize() {
-  loadAccounts();
-  loadProxies();
+  loadAccountsAndProxies();
   await promptUseProxy();
   await promptEnableAutoRetry();
-
-  if (useProxy && proxies.length < accounts.length) {
-    console.error('Not enough proxies for the number of accounts. Please add more proxies.');
-    process.exit(1);
-  }
 
   for (let i = 0; i < accounts.length; i++) {
     potentialPoints[i] = 0;
@@ -166,7 +140,7 @@ function displayAccountData(index) {
   console.log(chalk.green(`Points Today: ${pointsToday[index]}`));
   console.log(chalk.whiteBright(`Message: ${messages[index]}`));
 
-  const proxy = proxies[index % proxies.length];
+  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
   if (useProxy && proxy) {
     console.log(chalk.hex('#FFA500')(`Proxy: ${proxy}`));
   } else {
@@ -214,8 +188,8 @@ async function connectWebSocket(index) {
   const url = "wss://secure.ws.teneo.pro";
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
-  const proxy = proxies[index % proxies.length];
-  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
+  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
+  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
 
   sockets[index] = new WebSocket(wsUrl, { agent });
 
@@ -262,8 +236,8 @@ async function reconnectWebSocket(index) {
   const url = "wss://secure.ws.teneo.pro";
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
-  const proxy = proxies[index % proxies.length];
-  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
+  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
+  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
 
   if (sockets[index]) {
     sockets[index].removeAllListeners();
@@ -379,8 +353,8 @@ async function updateCountdownAndPoints(index) {
 function startPinging(index) {
   pingIntervals[index] = setInterval(async () => {
     if (sockets[index] && sockets[index].readyState === WebSocket.OPEN) {
-      const proxy = proxies[index % proxies.length];
-      const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
+      const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
+      const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
 
       sockets[index].send(JSON.stringify({ type: "PING" }), { agent });
       if (index === currentAccountIndex) {
@@ -406,8 +380,8 @@ function restartAccountProcess(index) {
 async function getUserId(index) {
   const loginUrl = "https://auth.teneo.pro/api/login";
 
-  const proxy = proxies[index % proxies.length];
-  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null; // تغییر این خط
+  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
+  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
 
   try {
     const response = await axios.post(loginUrl, {
