@@ -19,18 +19,17 @@ let userIds = [];
 let browserIds = [];
 let accounts = [];
 let accessTokens = [];
-let useProxy = false;
 let enableAutoRetry = false;
 let currentAccountIndex = 0;
 
-function loadAccountsAndProxies() {
-  if (!fs.existsSync('accounts_proxies.txt')) {
-    console.error('accounts_proxies.txt not found. Please add the file with account and proxy data.');
+function loadAccounts() {
+  if (!fs.existsSync('accounts.txt')) {
+    console.error('accounts.txt not found. Please add the file with account data.');
     process.exit(1);
   }
 
   try {
-    const data = fs.readFileSync('accounts_proxies.txt', 'utf8');
+    const data = fs.readFileSync('accounts.txt', 'utf8');
     accounts = data.split('\n').map(line => {
       const [email, password, proxy] = line.split(',');
       if (email && password && proxy) {
@@ -39,24 +38,8 @@ function loadAccountsAndProxies() {
       return null;
     }).filter(account => account !== null);
   } catch (err) {
-    console.error('Failed to load accounts and proxies:', err);
+    console.error('Failed to load accounts:', err);
   }
-}
-
-function promptUseProxy() {
-  return new Promise((resolve) => {
-    displayHeader();
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
-    rl.question('Do you want to use a proxy? (y/n): ', (answer) => {
-      useProxy = answer.toLowerCase() === 'y';
-      rl.close();
-      resolve();
-    });
-  });
 }
 
 function promptEnableAutoRetry() {
@@ -75,8 +58,7 @@ function promptEnableAutoRetry() {
 }
 
 async function initialize() {
-  loadAccountsAndProxies();
-  await promptUseProxy();
+  loadAccounts();
   await promptEnableAutoRetry();
 
   for (let i = 0; i < accounts.length; i++) {
@@ -141,11 +123,7 @@ function displayAccountData(index) {
   console.log(chalk.whiteBright(`Message: ${messages[index]}`));
 
   const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-  if (useProxy && proxy) {
-    console.log(chalk.hex('#FFA500')(`Proxy: ${proxy}`));
-  } else {
-    console.log(chalk.hex('#FFA500')(`Proxy: Not using proxy`));
-  }
+  console.log(chalk.hex('#FFA500')(`Proxy: ${proxy}`));
 
   console.log(chalk.cyan(separatorLine));
   console.log("\nStatus:");
@@ -189,7 +167,7 @@ async function connectWebSocket(index) {
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
   const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
+  const agent = new SocksProxyAgent(proxy); // اگر پروکسی استفاده می‌شود
 
   sockets[index] = new WebSocket(wsUrl, { agent });
 
@@ -237,7 +215,7 @@ async function reconnectWebSocket(index) {
   const wsUrl = `${url}/websocket?accessToken=${encodeURIComponent(accessTokens[index])}&version=${encodeURIComponent(version)}`;
 
   const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
+  const agent = new SocksProxyAgent(proxy); // اگر پروکسی استفاده می‌شود
 
   if (sockets[index]) {
     sockets[index].removeAllListeners();
@@ -353,10 +331,7 @@ async function updateCountdownAndPoints(index) {
 function startPinging(index) {
   pingIntervals[index] = setInterval(async () => {
     if (sockets[index] && sockets[index].readyState === WebSocket.OPEN) {
-      const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-      const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
-
-      sockets[index].send(JSON.stringify({ type: "PING" }), { agent });
+      sockets[index].send(JSON.stringify({ type: "PING" }));
       if (index === currentAccountIndex) {
         displayAccountData(index);
       }
@@ -364,33 +339,15 @@ function startPinging(index) {
   }, 60000);
 }
 
-function stopPinging(index) {
-  if (pingIntervals[index]) {
-    clearInterval(pingIntervals[index]);
-    pingIntervals[index] = null;
-  }
-}
-
-function restartAccountProcess(index) {
-  disconnectWebSocket(index);
-  connectWebSocket(index);
-  console.log(`WebSocket restarted for index: ${index}`);
-}
-
 async function getUserId(index) {
   const loginUrl = "https://auth.teneo.pro/api/login";
-
-  const proxy = accounts[index].proxy; // استفاده از پروکسی مربوط به اکانت
-  const agent = useProxy && proxy ? new SocksProxyAgent(proxy) : null;
 
   try {
     const response = await axios.post(loginUrl, {
       email: accounts[index].email,
       password: accounts[index].password
     }, {
-      httpsAgent: agent,
       headers: {
-        'Authorization': `Bearer ${accessTokens[index]}`,
         'Content-Type': 'application/json',
         'authority': 'auth.teneo.pro',
         'x-api-key': 'OwAG3kib1ivOJG4Y0OCZ8lJETa6ypvsDtGmdhcjA'
